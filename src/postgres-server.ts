@@ -7,7 +7,8 @@ import {
   ListToolsRequestSchema,
   McpError,
 } from '@modelcontextprotocol/sdk/types.js';
-import { Client } from 'pg';
+import pkg from 'pg';
+const { Client } = pkg;
 
 interface ColumnDefinition {
   name: string;

@@ -2,7 +2,8 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ErrorCode, ListToolsRequestSchema, McpError, } from '@modelcontextprotocol/sdk/types.js';
-import { Client } from 'pg';
+import pkg from 'pg';
+const { Client } = pkg;
 class PostgresServer {
     constructor() {
         // 从环境变量读取数据库连接信息
