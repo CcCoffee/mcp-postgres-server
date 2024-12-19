@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { CallToolRequestSchema, ErrorCode, ListToolsRequestSchema, McpError, ListResourcesRequestSchema, ReadResourceRequestSchema, } from '@modelcontextprotocol/sdk/types.js';
+import { CallToolRequestSchema, ListToolsRequestSchema, ListResourcesRequestSchema, ReadResourceRequestSchema, } from '@modelcontextprotocol/sdk/types.js';
 import pkg from 'pg';
 const { Client, Pool } = pkg;
 class PostgresServer {
@@ -22,11 +22,6 @@ class PostgresServer {
             },
         });
         this.setupHandlers();
-        this.server.onerror = (error) => console.error('[MCP Error]', error);
-        process.on('SIGINT', async () => {
-            await this.server.close();
-            process.exit(0);
-        });
     }
     setupHandlers() {
         // 资源处理程序
@@ -67,18 +62,25 @@ class PostgresServer {
         this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
             tools: [
                 {
-                    name: 'test_connection',
-                    description: '测试数据库连接'
-                },
-                {
-                    name: 'execute_query',
+                    name: 'query',
                     description: '执行只读SQL查询',
                     inputSchema: {
                         type: 'object',
                         properties: {
-                            query: { type: 'string', description: 'SQL查询语句' }
+                            sql: {
+                                type: 'string',
+                                description: 'SQL查询语句'
+                            }
                         },
-                        required: ['query']
+                        required: ['sql']
+                    }
+                },
+                {
+                    name: 'test_connection',
+                    description: '测试数据库连接',
+                    inputSchema: {
+                        type: 'object',
+                        properties: {}
                     }
                 },
                 {
@@ -87,15 +89,24 @@ class PostgresServer {
                     inputSchema: {
                         type: 'object',
                         properties: {
-                            tableName: { type: 'string', description: '表名' },
+                            tableName: {
+                                type: 'string',
+                                description: '表名'
+                            },
                             columns: {
                                 type: 'array',
                                 description: '列定义',
                                 items: {
                                     type: 'object',
                                     properties: {
-                                        name: { type: 'string', description: '列名' },
-                                        type: { type: 'string', description: '列类型' }
+                                        name: {
+                                            type: 'string',
+                                            description: '列名'
+                                        },
+                                        type: {
+                                            type: 'string',
+                                            description: '列类型'
+                                        }
                                     },
                                     required: ['name', 'type']
                                 }
@@ -103,38 +114,20 @@ class PostgresServer {
                         },
                         required: ['tableName', 'columns']
                     }
-                },
-                {
-                    name: 'insert_data',
-                    description: '向表中插入数据',
-                    inputSchema: {
-                        type: 'object',
-                        properties: {
-                            tableName: { type: 'string', description: '表名' },
-                            data: {
-                                type: 'array',
-                                description: '要插入的数据',
-                                items: { type: 'object' }
-                            }
-                        },
-                        required: ['tableName', 'data']
-                    }
                 }
             ]
         }));
         // 工具调用处理程序
         this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
             switch (request.params.name) {
+                case 'query':
+                    return this.executeQuery(request.params.arguments);
                 case 'test_connection':
                     return this.testConnection();
-                case 'execute_query':
-                    return this.executeQuery(request.params.arguments);
                 case 'create_table':
                     return this.createTable(request.params.arguments);
-                case 'insert_data':
-                    return this.insertData(request.params.arguments);
                 default:
-                    throw new McpError(ErrorCode.MethodNotFound, `未知工具: ${request.params.name}`);
+                    throw new Error(`未知工具: ${request.params.name}`);
             }
         });
     }
@@ -147,8 +140,7 @@ class PostgresServer {
                 content: [{
                         type: 'text',
                         text: '数据库连接成功'
-                    }],
-                _meta: {}
+                    }]
             };
         }
         catch (error) {
@@ -157,23 +149,21 @@ class PostgresServer {
                         type: 'text',
                         text: `数据库连接失败: ${error instanceof Error ? error.message : '未知错误'}`
                     }],
-                isError: true,
-                _meta: {}
+                isError: true
             };
         }
     }
     async executeQuery(args) {
-        const { query } = args;
+        const { sql } = args;
         const client = await this.pool.connect();
         try {
             await client.query('BEGIN TRANSACTION READ ONLY');
-            const result = await client.query(query);
+            const result = await client.query(sql);
             return {
                 content: [{
                         type: 'text',
                         text: JSON.stringify(result.rows, null, 2)
-                    }],
-                _meta: {}
+                    }]
             };
         }
         catch (error) {
@@ -182,8 +172,7 @@ class PostgresServer {
                         type: 'text',
                         text: `查询执行失败: ${error instanceof Error ? error.message : '未知错误'}`
                     }],
-                isError: true,
-                _meta: {}
+                isError: true
             };
         }
         finally {
@@ -202,8 +191,7 @@ class PostgresServer {
                 content: [{
                         type: 'text',
                         text: `表 ${tableName} 创建成功`
-                    }],
-                _meta: {}
+                    }]
             };
         }
         catch (error) {
@@ -212,40 +200,7 @@ class PostgresServer {
                         type: 'text',
                         text: `创建表失败: ${error instanceof Error ? error.message : '未知错误'}`
                     }],
-                isError: true,
-                _meta: {}
-            };
-        }
-        finally {
-            client.release();
-        }
-    }
-    async insertData(args) {
-        const { tableName, data } = args;
-        const client = await this.pool.connect();
-        try {
-            for (const record of data) {
-                const columns = Object.keys(record).join(', ');
-                const values = Object.values(record).map(val => typeof val === 'string' ? `'${val}'` : val).join(', ');
-                const insertQuery = `INSERT INTO ${tableName} (${columns}) VALUES (${values})`;
-                await client.query(insertQuery);
-            }
-            return {
-                content: [{
-                        type: 'text',
-                        text: `成功向 ${tableName} 插入 ${data.length} 条数据`
-                    }],
-                _meta: {}
-            };
-        }
-        catch (error) {
-            return {
-                content: [{
-                        type: 'text',
-                        text: `插入数据失败: ${error instanceof Error ? error.message : '未知错误'}`
-                    }],
-                isError: true,
-                _meta: {}
+                isError: true
             };
         }
         finally {
