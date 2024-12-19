@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "build": "npx tsc",
-    "start": "node build/postgres-server.js"
+    "start": "POSTGRES_URL=localhost:5432/monitor_center POSTGRES_USERNAME=postgres POSTGRES_PASSWORD=123456 node build/postgres-server.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "latest",

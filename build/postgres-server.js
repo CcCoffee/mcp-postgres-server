@@ -17,7 +17,58 @@ class PostgresServer {
             version: '0.1.0',
         }, {
             capabilities: {
-                tools: {},
+                tools: {
+                    'test_connection': {
+                        description: '测试数据库连接'
+                    },
+                    'execute_query': {
+                        description: '执行SQL查询',
+                        inputSchema: {
+                            type: 'object',
+                            properties: {
+                                query: { type: 'string', description: 'SQL查询语句' }
+                            },
+                            required: ['query']
+                        }
+                    },
+                    'create_table': {
+                        description: '创建数据库表',
+                        inputSchema: {
+                            type: 'object',
+                            properties: {
+                                tableName: { type: 'string', description: '表名' },
+                                columns: {
+                                    type: 'array',
+                                    description: '列定义',
+                                    items: {
+                                        type: 'object',
+                                        properties: {
+                                            name: { type: 'string', description: '列名' },
+                                            type: { type: 'string', description: '列类型' }
+                                        },
+                                        required: ['name', 'type']
+                                    }
+                                }
+                            },
+                            required: ['tableName', 'columns']
+                        }
+                    },
+                    'insert_data': {
+                        description: '向表中插入数据',
+                        inputSchema: {
+                            type: 'object',
+                            properties: {
+                                tableName: { type: 'string', description: '表名' },
+                                data: {
+                                    type: 'array',
+                                    description: '要插入的数据',
+                                    items: { type: 'object' }
+                                }
+                            },
+                            required: ['tableName', 'data']
+                        }
+                    }
+                },
             },
         });
         this.setupToolHandlers();
