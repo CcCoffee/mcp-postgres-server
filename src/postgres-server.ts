@@ -9,10 +9,9 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { Client } from 'pg';
 
-interface PostgresConfig {
-  url: string;
-  username: string;
-  password: string;
+interface ColumnDefinition {
+  name: string;
+  type: string;
 }
 
 interface ToolResponse {
@@ -23,8 +22,22 @@ interface ToolResponse {
 
 class PostgresServer {
   private server: Server;
+  private connectionString: string;
 
   constructor() {
+    // 从环境变量读取数据库连接信息
+    const { 
+      POSTGRES_URL, 
+      POSTGRES_USERNAME, 
+      POSTGRES_PASSWORD 
+    } = process.env;
+
+    if (!POSTGRES_URL || !POSTGRES_USERNAME || !POSTGRES_PASSWORD) {
+      throw new Error('缺少必要的数据库连接环境变量');
+    }
+
+    this.connectionString = `postgresql://${POSTGRES_USERNAME}:${POSTGRES_PASSWORD}@${POSTGRES_URL}`;
+
     this.server = new Server(
       {
         name: 'postgres-server',
@@ -51,16 +64,7 @@ class PostgresServer {
       tools: [
         {
           name: 'test_connection',
-          description: '测试数据库连接',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              url: { type: 'string', description: '数据库连接URL' },
-              username: { type: 'string', description: '用户名' },
-              password: { type: 'string', description: '密码' }
-            },
-            required: ['url', 'username', 'password']
-          }
+          description: '测试数据库连接'
         },
         {
           name: 'execute_query',
@@ -68,12 +72,9 @@ class PostgresServer {
           inputSchema: {
             type: 'object',
             properties: {
-              url: { type: 'string', description: '数据库连接URL' },
-              username: { type: 'string', description: '用户名' },
-              password: { type: 'string', description: '密码' },
               query: { type: 'string', description: 'SQL查询语句' }
             },
-            required: ['url', 'username', 'password', 'query']
+            required: ['query']
           }
         },
         {
@@ -82,9 +83,6 @@ class PostgresServer {
           inputSchema: {
             type: 'object',
             properties: {
-              url: { type: 'string', description: '数据库连接URL' },
-              username: { type: 'string', description: '用户名' },
-              password: { type: 'string', description: '密码' },
               tableName: { type: 'string', description: '表名' },
               columns: { 
                 type: 'array', 
@@ -99,7 +97,7 @@ class PostgresServer {
                 }
               }
             },
-            required: ['url', 'username', 'password', 'tableName', 'columns']
+            required: ['tableName', 'columns']
           }
         },
         {
@@ -108,9 +106,6 @@ class PostgresServer {
           inputSchema: {
             type: 'object',
             properties: {
-              url: { type: 'string', description: '数据库连接URL' },
-              username: { type: 'string', description: '用户名' },
-              password: { type: 'string', description: '密码' },
               tableName: { type: 'string', description: '表名' },
               data: { 
                 type: 'array', 
@@ -118,7 +113,7 @@ class PostgresServer {
                 items: { type: 'object' }
               }
             },
-            required: ['url', 'username', 'password', 'tableName', 'data']
+            required: ['tableName', 'data']
           }
         }
       ]
@@ -129,7 +124,7 @@ class PostgresServer {
       async (request: any) => {
         switch (request.params.name) {
           case 'test_connection':
-            return this.testConnection(request.params.arguments);
+            return this.testConnection();
           case 'execute_query':
             return this.executeQuery(request.params.arguments);
           case 'create_table':
@@ -143,9 +138,8 @@ class PostgresServer {
     );
   }
 
-  private async testConnection(args: any): Promise<ToolResponse> {
-    const { url, username, password } = args;
-    const client = new Client({ connectionString: url, user: username, password });
+  private async testConnection(): Promise<ToolResponse> {
+    const client = new Client({ connectionString: this.connectionString });
     
     try {
       await client.connect();
@@ -170,8 +164,8 @@ class PostgresServer {
   }
 
   private async executeQuery(args: any): Promise<ToolResponse> {
-    const { url, username, password, query } = args;
-    const client = new Client({ connectionString: url, user: username, password });
+    const { query } = args;
+    const client = new Client({ connectionString: this.connectionString });
     
     try {
       await client.connect();
@@ -196,9 +190,9 @@ class PostgresServer {
     }
   }
 
-  private async createTable(args: any): Promise<ToolResponse> {
-    const { url, username, password, tableName, columns } = args;
-    const client = new Client({ connectionString: url, user: username, password });
+  private async createTable(args: { tableName: string, columns: ColumnDefinition[] }): Promise<ToolResponse> {
+    const { tableName, columns } = args;
+    const client = new Client({ connectionString: this.connectionString });
     
     try {
       await client.connect();
@@ -230,8 +224,8 @@ class PostgresServer {
   }
 
   private async insertData(args: any): Promise<ToolResponse> {
-    const { url, username, password, tableName, data } = args;
-    const client = new Client({ connectionString: url, user: username, password });
+    const { tableName, data } = args;
+    const client = new Client({ connectionString: this.connectionString });
     
     try {
       await client.connect();
