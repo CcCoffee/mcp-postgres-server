@@ -1,84 +1,69 @@
 #!/usr/bin/env node
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { CallToolRequestSchema, ErrorCode, ListToolsRequestSchema, McpError, } from '@modelcontextprotocol/sdk/types.js';
+import { CallToolRequestSchema, ErrorCode, ListToolsRequestSchema, McpError, ListResourcesRequestSchema, ReadResourceRequestSchema, } from '@modelcontextprotocol/sdk/types.js';
 import pkg from 'pg';
-const { Client } = pkg;
+const { Client, Pool } = pkg;
 class PostgresServer {
     constructor() {
-        // 从环境变量读取数据库连接信息
         const { POSTGRES_URL, POSTGRES_USERNAME, POSTGRES_PASSWORD } = process.env;
         if (!POSTGRES_URL || !POSTGRES_USERNAME || !POSTGRES_PASSWORD) {
             throw new Error('缺少必要的数据库连接环境变量');
         }
         this.connectionString = `postgresql://${POSTGRES_USERNAME}:${POSTGRES_PASSWORD}@${POSTGRES_URL}`;
+        this.pool = new Pool({ connectionString: this.connectionString });
         this.server = new Server({
             name: 'postgres-server',
             version: '0.1.0',
         }, {
             capabilities: {
-                tools: {
-                    'test_connection': {
-                        description: '测试数据库连接'
-                    },
-                    'execute_query': {
-                        description: '执行SQL查询',
-                        inputSchema: {
-                            type: 'object',
-                            properties: {
-                                query: { type: 'string', description: 'SQL查询语句' }
-                            },
-                            required: ['query']
-                        }
-                    },
-                    'create_table': {
-                        description: '创建数据库表',
-                        inputSchema: {
-                            type: 'object',
-                            properties: {
-                                tableName: { type: 'string', description: '表名' },
-                                columns: {
-                                    type: 'array',
-                                    description: '列定义',
-                                    items: {
-                                        type: 'object',
-                                        properties: {
-                                            name: { type: 'string', description: '列名' },
-                                            type: { type: 'string', description: '列类型' }
-                                        },
-                                        required: ['name', 'type']
-                                    }
-                                }
-                            },
-                            required: ['tableName', 'columns']
-                        }
-                    },
-                    'insert_data': {
-                        description: '向表中插入数据',
-                        inputSchema: {
-                            type: 'object',
-                            properties: {
-                                tableName: { type: 'string', description: '表名' },
-                                data: {
-                                    type: 'array',
-                                    description: '要插入的数据',
-                                    items: { type: 'object' }
-                                }
-                            },
-                            required: ['tableName', 'data']
-                        }
-                    }
-                },
+                resources: {},
+                tools: {},
             },
         });
-        this.setupToolHandlers();
+        this.setupHandlers();
         this.server.onerror = (error) => console.error('[MCP Error]', error);
         process.on('SIGINT', async () => {
             await this.server.close();
             process.exit(0);
         });
     }
-    setupToolHandlers() {
+    setupHandlers() {
+        // 资源处理程序
+        this.server.setRequestHandler(ListResourcesRequestSchema, async () => {
+            const client = await this.pool.connect();
+            try {
+                const result = await client.query("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'");
+                return {
+                    resources: result.rows.map((row) => ({
+                        uri: `postgres://${row.table_name}/schema`,
+                        mimeType: 'application/json',
+                        name: `"${row.table_name}" 数据库架构`,
+                    })),
+                };
+            }
+            finally {
+                client.release();
+            }
+        });
+        this.server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+            const client = await this.pool.connect();
+            try {
+                const tableName = request.params.uri.split('/')[2];
+                const result = await client.query('SELECT column_name, data_type FROM information_schema.columns WHERE table_name = $1', [tableName]);
+                return {
+                    contents: [{
+                            uri: request.params.uri,
+                            mimeType: 'application/json',
+                            text: JSON.stringify(result.rows, null, 2),
+                        }],
+                };
+            }
+            finally {
+                client.release();
+            }
+        });
+        // 工具处理程序
         this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
             tools: [
                 {
@@ -87,7 +72,7 @@ class PostgresServer {
                 },
                 {
                     name: 'execute_query',
-                    description: '执行SQL查询',
+                    description: '执行只读SQL查询',
                     inputSchema: {
                         type: 'object',
                         properties: {
@@ -137,6 +122,7 @@ class PostgresServer {
                 }
             ]
         }));
+        // 工具调用处理程序
         this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
             switch (request.params.name) {
                 case 'test_connection':
@@ -178,11 +164,10 @@ class PostgresServer {
     }
     async executeQuery(args) {
         const { query } = args;
-        const client = new Client({ connectionString: this.connectionString });
+        const client = await this.pool.connect();
         try {
-            await client.connect();
+            await client.query('BEGIN TRANSACTION READ ONLY');
             const result = await client.query(query);
-            await client.end();
             return {
                 content: [{
                         type: 'text',
@@ -201,17 +186,18 @@ class PostgresServer {
                 _meta: {}
             };
         }
+        finally {
+            await client.query('ROLLBACK').catch(console.warn);
+            client.release();
+        }
     }
     async createTable(args) {
         const { tableName, columns } = args;
-        const client = new Client({ connectionString: this.connectionString });
+        const client = await this.pool.connect();
         try {
-            await client.connect();
-            // 构建创建表的SQL语句
             const columnDefinitions = columns.map(col => `${col.name} ${col.type}`).join(', ');
             const createTableQuery = `CREATE TABLE ${tableName} (${columnDefinitions})`;
             await client.query(createTableQuery);
-            await client.end();
             return {
                 content: [{
                         type: 'text',
@@ -230,20 +216,20 @@ class PostgresServer {
                 _meta: {}
             };
         }
+        finally {
+            client.release();
+        }
     }
     async insertData(args) {
         const { tableName, data } = args;
-        const client = new Client({ connectionString: this.connectionString });
+        const client = await this.pool.connect();
         try {
-            await client.connect();
-            // 构建插入数据的SQL语句
             for (const record of data) {
                 const columns = Object.keys(record).join(', ');
                 const values = Object.values(record).map(val => typeof val === 'string' ? `'${val}'` : val).join(', ');
                 const insertQuery = `INSERT INTO ${tableName} (${columns}) VALUES (${values})`;
                 await client.query(insertQuery);
             }
-            await client.end();
             return {
                 content: [{
                         type: 'text',
@@ -261,6 +247,9 @@ class PostgresServer {
                 isError: true,
                 _meta: {}
             };
+        }
+        finally {
+            client.release();
         }
     }
     async run() {
