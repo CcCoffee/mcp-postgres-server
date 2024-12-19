@@ -1,0 +1,20 @@
+{
+  "name": "postgres-server",
+  "version": "1.0.0",
+  "description": "Postgres数据库MCP服务器",
+  "main": "build/postgres-server.js",
+  "type": "module",
+  "scripts": {
+    "build": "npx tsc",
+    "start": "node build/postgres-server.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "latest",
+    "pg": "^8.7.3"
+  },
+  "devDependencies": {
+    "@types/node": "^16.11.6",
+    "@types/pg": "^8.6.5",
+    "typescript": "^4.4.4"
+  }
+}
