@@ -17,8 +17,76 @@ class PostgresServer {
             version: '0.1.0',
         }, {
             capabilities: {
-                resources: {},
-                tools: {},
+                resources: {
+                    'postgres://server/schema': {
+                        name: 'Server Schema',
+                        description: 'PostgreSQL server schema information'
+                    },
+                    'postgres://server_monitoring_rule/schema': {
+                        name: 'Server Monitoring Rule Schema',
+                        description: 'Schema for server monitoring rules'
+                    },
+                    'postgres://monitoring_rule/schema': {
+                        name: 'Monitoring Rule Schema',
+                        description: 'Schema for monitoring rules'
+                    }
+                },
+                tools: {
+                    'query': {
+                        name: '执行只读查询',
+                        description: '在PostgreSQL数据库上执行只读SQL查询',
+                        inputSchema: {
+                            type: 'object',
+                            properties: {
+                                sql: {
+                                    type: 'string',
+                                    description: 'SQL查询语句'
+                                }
+                            },
+                            required: ['sql']
+                        }
+                    },
+                    'test_connection': {
+                        name: '测试数据库连接',
+                        description: '验证与PostgreSQL数据库的连接',
+                        inputSchema: {
+                            type: 'object',
+                            properties: {}
+                        }
+                    },
+                    'create_table': {
+                        name: '创建数据库表',
+                        description: '在PostgreSQL数据库中创建新表',
+                        inputSchema: {
+                            type: 'object',
+                            properties: {
+                                tableName: {
+                                    type: 'string',
+                                    description: '表名'
+                                },
+                                columns: {
+                                    type: 'array',
+                                    description: '列定义',
+                                    items: {
+                                        type: 'object',
+                                        properties: {
+                                            name: {
+                                                type: 'string',
+                                                description: '列名'
+                                            },
+                                            type: {
+                                                type: 'string',
+                                                description: '列类型'
+                                            }
+                                        },
+                                        required: ['name', 'type']
+                                    }
+                                }
+                            },
+                            required: ['tableName', 'columns']
+                        }
+                    }
+                }
             },
         });
         this.setupHandlers();
